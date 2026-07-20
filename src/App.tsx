@@ -231,6 +231,7 @@ export default function App() {
   
   // Estado de Gravação do Mix
   const [isRecording, setIsRecording] = useState(false);
+  const isRecordingRef = useRef(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [recordedBlobs, setRecordedBlobs] = useState<Blob[]>([]);
   
@@ -1103,51 +1104,45 @@ const finishAndAdvance = () => {
 
     playStartTimeRef.current = Date.now() - accumulatedTimeRef.current * 1000;
 
-    if (isRecording) {
- const startRecording = () => {
-  if (!mediaDestRef.current) return;
-  const chunks: Blob[] = [];
-  setRecordedBlobs([]);
-  setAudioUrl(null);
-
-  let mimeType = 'audio/webm';
-  if (!MediaRecorder.isTypeSupported('audio/webm')) {
-    mimeType = 'audio/ogg';
-  }
-
-  const finalize = () => {
-    if (chunks.length === 0) {
-      console.warn('[Gravação] Nenhum dado foi capturado.');
+    if (isRecordingRef.current) {
+      startRecording();
     }
-    const finalBlob = new Blob(chunks, { type: mimeType });
-    const url = URL.createObjectURL(finalBlob);
-    setAudioUrl(url);
-    setIsRecording(false);
+
+    const tick = () => {
+      const elapsed = (Date.now() - playStartTimeRef.current) / 1000;
+      if (elapsed >= totalDuration) {
+        setCurrentTime(totalDuration);
+        stopPlayback();
+        return;
+      }
+
+      setCurrentTime(elapsed);
+      const currentSec = Math.floor(elapsed);
+
+      if (currentSec !== lastSecTriggeredRef.current) {
+        lastSecTriggeredRef.current = currentSec;
+
+        // Efeitos sonoros automáticos
+        const activeSfxs = effects.filter(e => e.time === currentSec);
+        activeSfxs.forEach(e => playSFX(e.id));
+
+        // Blocos de narração automáticos
+        const targetBlock = blocks.find(b => currentSec >= b.startSec && currentSec < b.endSec);
+        if (targetBlock && !spokenBlocksRef.current.has(targetBlock.id)) {
+          if (speakingBlockIdRef.current !== targetBlock.id && !blockQueueRef.current.includes(targetBlock.id)) {
+            blockQueueRef.current.push(targetBlock.id);
+            if (!isCurrentlySpeakingRef.current) {
+              speakBlock(targetBlock);
+            }
+          }
+        }
+      }
+
+      playTimerRef.current = requestAnimationFrame(tick);
+    };
+
+    playTimerRef.current = requestAnimationFrame(tick);
   };
-
-  try {
-    const rec = new MediaRecorder(mediaDestRef.current.stream, { mimeType });
-    mediaRecorderRef.current = rec;
-
-    rec.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunks.push(e.data);
-    };
-
-    rec.onstop = finalize;
-
-    // NOVO: se o gravador quebrar, não fica preso pra sempre —
-    // registra o erro e ainda assim finaliza com o que já tiver.
-    rec.onerror = (e: any) => {
-      console.error('[Gravação] Erro no MediaRecorder:', e.error || e);
-      finalize();
-    };
-
-    rec.start(1000); // força entrega de dados a cada 1s, em vez de só no final
-  } catch (err) {
-    console.error("Falha ao gravar áudio:", err);
-    setIsRecording(false);
-  }
-};
 
   const pausePlayback = () => {
     if (!isPlayingRef.current) return;
@@ -1195,7 +1190,7 @@ const finishAndAdvance = () => {
     blockQueueRef.current = [];
     spokenBlocksRef.current.clear();
 
-    if (isRecording) {
+    if (isRecordingRef.current) {
       stopRecording();
     }
   };
@@ -1220,16 +1215,30 @@ const finishAndAdvance = () => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
       };
 
-      rec.onstop = () => {
+      const finalize = () => {
+        if (chunks.length === 0) {
+          console.warn('[Gravação] Nenhum dado foi capturado.');
+        }
         const finalBlob = new Blob(chunks, { type: mimeType });
         const url = URL.createObjectURL(finalBlob);
         setAudioUrl(url);
+        isRecordingRef.current = false;
         setIsRecording(false);
       };
 
-      rec.start();
+      rec.onstop = finalize;
+
+      // Se o gravador quebrar, não fica preso pra sempre —
+      // registra o erro e ainda assim finaliza com o que já tiver.
+      rec.onerror = (e: any) => {
+        console.error('[Gravação] Erro no MediaRecorder:', e.error || e);
+        finalize();
+      };
+
+      rec.start(1000); // força entrega de dados a cada 1s, em vez de só no final
     } catch (err) {
       console.error("Falha ao gravar áudio:", err);
+      isRecordingRef.current = false;
       setIsRecording(false);
     }
   };
@@ -1244,7 +1253,8 @@ const finishAndAdvance = () => {
     if (isPlayingRef.current) {
       stopPlayback();
     }
-    const nextRec = !isRecording;
+    const nextRec = !isRecordingRef.current;
+    isRecordingRef.current = nextRec;
     setIsRecording(nextRec);
     if (nextRec) {
       setTimeout(() => {
@@ -1553,6 +1563,7 @@ const finishAndAdvance = () => {
               <button
                 onClick={() => {
                   stopPlayback();
+                  isRecordingRef.current = true;
                   setIsRecording(true);
                   setTimeout(() => {
                     startPlayback();
