@@ -1008,17 +1008,20 @@ export default function App() {
       ? `/api/tts-azure?text=${encodeURIComponent(textToSpeak)}&voice=${azureVoice}&targetDuration=${blockDuration}`
       : `/api/tts?text=${encodeURIComponent(textToSpeak)}&voice=${geminiVoice}&emotion=${encodeURIComponent(geminiEmotion)}&targetDuration=${blockDuration}`;
 
-    const finishAndAdvance = () => {
-      setVoiceVU(0);
-      spokenBlocksRef.current.add(block.id);
-      applyDucking(false);
-      isCurrentlySpeakingRef.current = false;
-      blockQueueRef.current = blockQueueRef.current.filter(id => id !== block.id);
-      if (blockQueueRef.current.length > 0) {
-        const nextBlock = blocks.find(b => b.id === blockQueueRef.current[0]);
-        if (nextBlock) speakBlock(nextBlock);
-      }
-    };
+let alreadyAdvanced = false;
+const finishAndAdvance = () => {
+  if (alreadyAdvanced) return;
+  alreadyAdvanced = true;
+  setVoiceVU(0);
+  spokenBlocksRef.current.add(block.id);
+  applyDucking(false);
+  isCurrentlySpeakingRef.current = false;
+  blockQueueRef.current = blockQueueRef.current.filter(id => id !== block.id);
+  if (blockQueueRef.current.length > 0) {
+    const nextBlock = blocks.find(b => b.id === blockQueueRef.current[0]);
+    if (nextBlock) speakBlock(nextBlock);
+  }
+};
 
     let ttsResponse: Response;
     try {
@@ -1101,44 +1104,50 @@ export default function App() {
     playStartTimeRef.current = Date.now() - accumulatedTimeRef.current * 1000;
 
     if (isRecording) {
-      startRecording();
+ const startRecording = () => {
+  if (!mediaDestRef.current) return;
+  const chunks: Blob[] = [];
+  setRecordedBlobs([]);
+  setAudioUrl(null);
+
+  let mimeType = 'audio/webm';
+  if (!MediaRecorder.isTypeSupported('audio/webm')) {
+    mimeType = 'audio/ogg';
+  }
+
+  const finalize = () => {
+    if (chunks.length === 0) {
+      console.warn('[Gravação] Nenhum dado foi capturado.');
     }
+    const finalBlob = new Blob(chunks, { type: mimeType });
+    const url = URL.createObjectURL(finalBlob);
+    setAudioUrl(url);
+    setIsRecording(false);
+  };
 
-    const tick = () => {
-      const elapsed = (Date.now() - playStartTimeRef.current) / 1000;
-      if (elapsed >= totalDuration) {
-        setCurrentTime(totalDuration);
-        stopPlayback();
-        return;
-      }
+  try {
+    const rec = new MediaRecorder(mediaDestRef.current.stream, { mimeType });
+    mediaRecorderRef.current = rec;
 
-      setCurrentTime(elapsed);
-      const currentSec = Math.floor(elapsed);
-
-      if (currentSec !== lastSecTriggeredRef.current) {
-        lastSecTriggeredRef.current = currentSec;
-
-        // Efeitos sonoros automáticos
-        const activeSfxs = effects.filter(e => e.time === currentSec);
-        activeSfxs.forEach(e => playSFX(e.id));
-
-        // Blocos de narração automáticos
-        const targetBlock = blocks.find(b => currentSec >= b.startSec && currentSec < b.endSec);
-        if (targetBlock && !spokenBlocksRef.current.has(targetBlock.id)) {
-          if (speakingBlockIdRef.current !== targetBlock.id && !blockQueueRef.current.includes(targetBlock.id)) {
-            blockQueueRef.current.push(targetBlock.id);
-            if (!isCurrentlySpeakingRef.current) {
-              speakBlock(targetBlock);
-            }
-          }
-        }
-      }
-
-      playTimerRef.current = requestAnimationFrame(tick);
+    rec.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
     };
 
-    playTimerRef.current = requestAnimationFrame(tick);
-  };
+    rec.onstop = finalize;
+
+    // NOVO: se o gravador quebrar, não fica preso pra sempre —
+    // registra o erro e ainda assim finaliza com o que já tiver.
+    rec.onerror = (e: any) => {
+      console.error('[Gravação] Erro no MediaRecorder:', e.error || e);
+      finalize();
+    };
+
+    rec.start(1000); // força entrega de dados a cada 1s, em vez de só no final
+  } catch (err) {
+    console.error("Falha ao gravar áudio:", err);
+    setIsRecording(false);
+  }
+};
 
   const pausePlayback = () => {
     if (!isPlayingRef.current) return;
