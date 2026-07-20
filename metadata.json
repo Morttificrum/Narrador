@@ -1,0 +1,6 @@
+{
+  "name": "Narrador de Markdown",
+  "description": "Transforme seus arquivos Markdown em narrações de voz com trilhas sonoras de fundo personalizadas utilizando inteligência artificial.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
