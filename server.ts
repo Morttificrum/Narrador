@@ -6,7 +6,7 @@ dotenv.config();
 
 const app = express();
 app.use(express.json());
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // BUG CORRIGIDO: no dev (tsx, roda como ESM) __dirname não existe nativamente, então
 // precisa calcular via import.meta.url. Mas no build de produção (esbuild empacota
